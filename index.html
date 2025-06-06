@@ -6,13 +6,16 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>텍사스 홀덤 포커</title>
     <link rel="icon" href="data:;base64,iVBORw0KGgo=">
-  <script type="module" crossorigin src="/poker/assets/index-BM9WLk_m.js"></script>
-  <link rel="stylesheet" crossorigin href="/poker/assets/index-DNx7hzhK.css">
+  <script type="module" crossorigin src="/poker/assets/index-CVkQmEAT.js"></script>
+  <link rel="stylesheet" crossorigin href="/poker/assets/index-Dpqmd91D.css">
 </head>
 <body>
     <div id="game-container">
         <header>
             <h1>텍사스 홀덤 포커</h1>
+            <div id="global-chips-display-container">
+                플레이어 총 보유 칩: <span id="global-chips-display">0</span>
+            </div>
         </header>
         <main>
             <div id="game-board" style="display: none;">
@@ -31,7 +34,7 @@
                         <div id="ai-action-animation" class="action-animation"></div>
                         <h2 id="ai-name">AI 상대</h2>
                         <div id="ai-info" class="info-bar">
-                            <span id="ai-coins-display">코인: 0</span>
+                            <span id="ai-chips-display">칩: 0</span>
                             <span id="ai-action-display" class="action-display"></span>
                             <span id="dealer-chip-ai" class="dealer-chip" style="display:none;">D</span>
                             <span id="marathonLevelDisplay" class="info-item" style="display:none;"></span>
@@ -45,7 +48,7 @@
                         <div id="player-action-animation" class="action-animation"></div>
                         <h2>나의 카드</h2>
                          <div id="player-info" class="info-bar">
-                            <span id="player-coins-display">코인: 0</span>
+                            <span id="player-chips-display">칩: 0</span>
                             <span id="player-action-display" class="action-display"></span>
                             <span id="dealer-chip-player" class="dealer-chip" style="display:none;">D</span>
                         </div>
@@ -61,14 +64,14 @@
             </div>
             <div id="actions-area">
                 <button id="setup-game-button" aria-label="새로운 게임 설정 및 시작하기">새 게임 설정</button>
+                <button id="exit-game-button" style="display: none;" aria-label="현재 게임에서 나가기">게임 나가기</button>
                 
                 <!-- Practice Mode Buttons -->
                 <div id="practice-mode-actions" style="display: none;">
                     <button id="deal-new-hand-practice-button">새 핸드 (연습)</button>
-                    <button id="deal-flop-button" aria-label="플랍 카드 보기">플랍 (2장)</button>
-                    <button id="deal-turn-button" aria-label="턴 카드 보기">3번째 카드</button>
-                    <button id="deal-river-button" aria-label="리버 카드 보기">4번째 카드</button>
-                    <button id="deal-fifth-street-button" aria-label="다섯 번째 카드 보기">5번째 카드</button>
+                    <button id="deal-flop-button" aria-label="플랍 카드 보기">플랍 (3장)</button>
+                    <button id="deal-turn-button" aria-label="턴 카드 보기">턴 (4번째 카드)</button>
+                    <button id="deal-river-button" aria-label="리버 카드 보기">리버 (5번째 카드)</button>
                     <button id="evaluate-button" aria-label="현재 패 확인하기">패 확인</button>
                 </div>
 
@@ -91,7 +94,7 @@
             </div>
         </main>
         <footer>
-            <p>텍사스 홀덤 포커 v1.2.3</p>
+            <p>텍사스 홀덤 포커 v1.3.3</p>
         </footer>
     </div>
 
@@ -112,8 +115,8 @@
             </div>
             <div id="solo-ai-options" style="display: none;">
                 <div class="setup-option">
-                    <label for="startingCoinsSelect">시작 코인:</label>
-                    <select id="startingCoinsSelect">
+                    <label for="startingChipsSelect">세션 시작 칩 (보유 칩에서 차감):</label>
+                    <select id="startingChipsSelect">
                         <option value="1000">1,000</option>
                         <option value="5000">5,000</option>
                         <option value="10000">10,000</option>
@@ -141,6 +144,17 @@
             <ul id="hand-rankings-list">
                 <!-- 족보 목록이 여기에 동적으로 채워집니다 -->
             </ul>
+        </div>
+    </div>
+
+    <div id="exit-game-confirmation-modal" class="modal" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="exit-game-modal-title">
+        <div class="modal-content">
+            <h2 id="exit-game-modal-title">게임 나가기 확인</h2>
+            <p>정말로 게임에서 나가시겠습니까? 현재 핸드에 베팅한 칩은 반환되지 않습니다.</p>
+            <div class="modal-actions">
+                <button id="confirm-exit-game-button" class="modal-button alert">나가기</button>
+                <button id="cancel-exit-game-button" class="modal-button">머무르기</button>
+            </div>
         </div>
     </div>
 
