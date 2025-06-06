@@ -1047,7 +1047,6 @@ function updateActionButtonsAvailability() {
             // Check button might be enabled if human has matched and it's their turn to act further (complex, usually round ends)
             // For simplicity, if AI is all-in and human matched, betting round should end or check is option.
             // If AI is all in and human's currentBetInRound >= AI's currentBetInRound, human can check if no further action possible.
-            // Let's assume checkButton is enabled if callAmountForAIAllIn <= 0 and human isn't all-in.
              checkButton.disabled = humanPlayer.isAllIn;
 
         } else {
@@ -1177,69 +1176,55 @@ async function handleAllInAction() {
     if (humanTotalChipsBeforeAction <= 0) return;
 
     let amountCommittedByHumanToPotThisAction: number;
-    let finalHumanBetInRound: number; // Human's total bet for this round after this action
+    let finalHumanBetInRound: number; 
 
-    // Assume human commits all their chips initially for calculation
     finalHumanBetInRound = humanPlayer.currentBetInRound + humanTotalChipsBeforeAction;
     amountCommittedByHumanToPotThisAction = humanTotalChipsBeforeAction;
 
 
     if (aiPlayer && aiPlayer.isAllIn && finalHumanBetInRound > aiPlayer.currentBetInRound) {
-        // AI is already all-in, and human's intended all-in would exceed AI's total bet.
-        // Human effectively calls AI's all-in. Amount committed to THIS pot is capped.
         const requiredToCallAIAllIn = aiPlayer.currentBetInRound - humanPlayer.currentBetInRound;
         
         if (requiredToCallAIAllIn <= 0) { 
-            // Human has already met or exceeded AI's bet. All-in doesn't add to *this* pot.
             amountCommittedByHumanToPotThisAction = 0;
-            // finalHumanBetInRound is already humanPlayer.currentBetInRound + humanTotalChipsBeforeAction
-            // but the effective bet for this pot is capped at AI's bet.
-            // player.currentBetInRound should reflect total committed. Pot adjustment handles contestable amount.
         } else {
-            // Human needs to commit more to call AI's all-in. Cap at AI's bet or human's remaining chips.
             amountCommittedByHumanToPotThisAction = Math.min(humanTotalChipsBeforeAction, requiredToCallAIAllIn);
         }
-        // Update finalHumanBetInRound to reflect actual commitment for this action
         finalHumanBetInRound = humanPlayer.currentBetInRound + amountCommittedByHumanToPotThisAction;
-
-
-        humanPlayer.lastAction = 'call'; // Effectively a call of AI's all-in
+        humanPlayer.lastAction = 'call'; 
         showActionAnimation('human', `올인 (AI 콜: ${amountCommittedByHumanToPotThisAction})`);
         messageAreaDiv.textContent = `당신은 AI의 올인(${aiPlayer.currentBetInRound})에 콜하고, 당신도 올인합니다.`;
-        // DO NOT change currentBetToCall or playerWhoLastRaised, AI is the one who is all-in and capped.
     } else {
-        // Normal all-in situation (AI not all-in, or AI all-in for more, or human has fewer chips than AI's bet)
-        // amountCommittedByHumanToPotThisAction remains humanTotalChipsBeforeAction
-        // finalHumanBetInRound remains humanPlayer.currentBetInRound + humanTotalChipsBeforeAction
-
         const isCurrentlyBet = currentBetToCall === 0;
-        // Check if this all-in constitutes a raise
         const isEffectivelyRaise = !isCurrentlyBet && finalHumanBetInRound > currentBetToCall;
         
         if (isEffectivelyRaise) {
             humanPlayer.lastAction = 'raise';
-            minRaiseAmount = finalHumanBetInRound - currentBetToCall; // The amount of the raise itself
+            minRaiseAmount = finalHumanBetInRound - currentBetToCall; 
             currentBetToCall = finalHumanBetInRound;
             playerWhoLastRaised = 'human';
-            if (aiPlayer) aiPlayer.hasActedThisRound = false; // AI needs to act again
+            if (aiPlayer) aiPlayer.hasActedThisRound = false; 
         } else if (isCurrentlyBet) {
             humanPlayer.lastAction = 'bet';
-            minRaiseAmount = finalHumanBetInRound; // The bet amount itself
+            minRaiseAmount = finalHumanBetInRound; 
             currentBetToCall = finalHumanBetInRound;
             playerWhoLastRaised = 'human';
-            if (aiPlayer) aiPlayer.hasActedThisRound = false; // AI needs to act again
-        } else { // Is effectively a call (or matching all-in if currentBetToCall was already met)
+            if (aiPlayer) aiPlayer.hasActedThisRound = false; 
+        } else { 
             humanPlayer.lastAction = 'call';
         }
         showActionAnimation('human', `올인 (${amountCommittedByHumanToPotThisAction})`);
         messageAreaDiv.textContent = `당신은 올인(${amountCommittedByHumanToPotThisAction}) ${translateAction(humanPlayer.lastAction)}하여 총 ${finalHumanBetInRound}(으)로 만들었습니다!`;
     }
 
-    humanPlayer.chips = 0; // Human is always out of chips after clicking all-in
-    humanPlayer.isAllIn = true;
+    humanPlayer.chips -= amountCommittedByHumanToPotThisAction; // Player's chips reduced by the amount actually committed
     currentPot += amountCommittedByHumanToPotThisAction;
-    humanPlayer.currentBetInRound = finalHumanBetInRound; // This tracks total committed by human this round
+    humanPlayer.currentBetInRound = finalHumanBetInRound; 
 
+    if (humanPlayer.chips === 0) { // Player is all-in only if their chips are now zero
+        humanPlayer.isAllIn = true;
+    }
+    
     humanPlayer.hasActedThisRound = true;
     await checkBettingRoundEnd();
 }
