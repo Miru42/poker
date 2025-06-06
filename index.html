@@ -1,0 +1,164 @@
+
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>텍사스 홀덤 포커</title>
+    <link rel="stylesheet" href="index.css">
+    <link rel="icon" href="data:;base64,iVBORw0KGgo=">
+<link rel="stylesheet" href="/index.css">
+</head>
+<body>
+    <div id="game-container">
+        <header>
+            <h1>텍사스 홀덤 포커</h1>
+            <div id="global-chips-display-container">
+                플레이어 총 보유 칩: <span id="global-chips-display">0</span>
+            </div>
+        </header>
+        <main>
+            <div id="game-board" style="display: none;">
+                <div id="community-card-area">
+                    <h2>커뮤니티 카드</h2>
+                    <div id="community-cards" class="hand-display" aria-live="polite">
+                        <!-- 커뮤니티 카드가 여기에 표시됩니다 -->
+                    </div>
+                    <div id="pot-area" aria-live="polite">
+                        팟: <span id="pot-amount">0</span>
+                    </div>
+                </div>
+
+                <div id="players-battle-area">
+                    <div id="ai-player-area" class="player-display-area">
+                        <div id="ai-action-animation" class="action-animation"></div>
+                        <h2 id="ai-name">AI 상대</h2>
+                        <div id="ai-info" class="info-bar">
+                            <span id="ai-chips-display">칩: 0</span>
+                            <span id="ai-action-display" class="action-display"></span>
+                            <span id="dealer-chip-ai" class="dealer-chip" style="display:none;">D</span>
+                            <span id="marathonLevelDisplay" class="info-item" style="display:none;"></span>
+                        </div>
+                        <div id="ai-hole-cards" class="hand-display" aria-live="polite">
+                            <!-- AI 홀 카드가 여기에 표시됩니다 (뒷면) -->
+                        </div>
+                    </div>
+
+                    <div id="player-area" class="player-display-area">
+                        <div id="player-action-animation" class="action-animation"></div>
+                        <h2>나의 카드</h2>
+                         <div id="player-info" class="info-bar">
+                            <span id="player-chips-display">칩: 0</span>
+                            <span id="player-action-display" class="action-display"></span>
+                            <span id="dealer-chip-player" class="dealer-chip" style="display:none;">D</span>
+                        </div>
+                        <div id="player-hole-cards" class="hand-display" aria-live="polite">
+                            <!-- 플레이어 홀 카드가 여기에 표시됩니다 -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="message-area" role="status" aria-live="assertive">
+                환영합니다! "새 게임 설정" 버튼을 눌러 게임을 시작하세요.
+            </div>
+            <div id="actions-area">
+                <button id="setup-game-button" aria-label="새로운 게임 설정 및 시작하기">새 게임 설정</button>
+                <button id="exit-game-button" style="display: none;" aria-label="현재 게임에서 나가기">게임 나가기</button>
+                
+                <!-- Practice Mode Buttons -->
+                <div id="practice-mode-actions" style="display: none;">
+                    <button id="deal-new-hand-practice-button">새 핸드 (연습)</button>
+                    <button id="deal-flop-button" aria-label="플랍 카드 보기">플랍 (3장)</button>
+                    <button id="deal-turn-button" aria-label="턴 카드 보기">턴 (4번째 카드)</button>
+                    <button id="deal-river-button" aria-label="리버 카드 보기">리버 (5번째 카드)</button>
+                    <button id="evaluate-button" aria-label="현재 패 확인하기">패 확인</button>
+                </div>
+
+                <!-- AI Mode Betting Actions -->
+                <div id="player-betting-actions" style="display: none;">
+                    <button id="foldButton">폴드</button>
+                    <button id="checkButton">체크</button>
+                    <button id="callButton">콜</button>
+                    <div id="bet-slider-container">
+                        <label for="betPercentageSlider">벳/레이즈 비율:</label>
+                        <input type="range" id="betPercentageSlider" min="5" max="95" step="5" value="5">
+                        <span id="betPercentageValue">5%</span>
+                        <span id="calculatedBetAmountDisplay">(금액: 0)</span>
+                    </div>
+                    <button id="confirmBetButton">벳/레이즈</button>
+                    <button id="allInButton">올인</button>
+                </div>
+                <button id="startNextHandButton" style="display: none;">다음 핸드 시작</button>
+                <button id="show-rankings-button" aria-label="족보 보기">족보 보기</button>
+            </div>
+        </main>
+        <footer>
+            <p>텍사스 홀덤 포커 v1.3.3</p>
+        </footer>
+    </div>
+
+    <div id="game-setup-modal" class="modal" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="game-setup-modal-title">
+        <div class="modal-content">
+            <button class="close-button" id="close-setup-modal-button" aria-label="닫기">&times;</button>
+            <h2 id="game-setup-modal-title">게임 설정</h2>
+            <div class="setup-option">
+                <label>게임 모드:</label>
+                <div>
+                    <input type="radio" id="gameModePractice" name="gameMode" value="practice" checked>
+                    <label for="gameModePractice">연습 모드</label>
+                </div>
+                <div>
+                    <input type="radio" id="gameModeSoloAI" name="gameMode" value="solo_ai">
+                    <label for="gameModeSoloAI">혼자 하기 (AI 대결)</label>
+                </div>
+            </div>
+            <div id="solo-ai-options" style="display: none;">
+                <div class="setup-option">
+                    <label for="startingChipsSelect">세션 시작 칩 (보유 칩에서 차감):</label>
+                    <select id="startingChipsSelect">
+                        <option value="1000">1,000</option>
+                        <option value="5000">5,000</option>
+                        <option value="10000">10,000</option>
+                        <option value="20000">20,000</option>
+                        <option value="50000">50,000</option>
+                        <option value="100000">100,000</option>
+                    </select>
+                </div>
+                <div class="setup-option">
+                    <label for="aiDifficultySelect">AI 난이도:</label>
+                    <select id="aiDifficultySelect">
+                        <option value="marathon">마라톤</option>
+                        <option value="impossible">불가능</option>
+                    </select>
+                </div>
+            </div>
+            <button id="start-configured-game-button" class="modal-button">게임 시작</button>
+        </div>
+    </div>
+
+    <div id="rankings-modal" class="modal" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="rankings-modal-title">
+        <div class="modal-content">
+            <button class="close-button" aria-label="닫기">&times;</button>
+            <h2 id="rankings-modal-title">포커 족보</h2>
+            <ul id="hand-rankings-list">
+                <!-- 족보 목록이 여기에 동적으로 채워집니다 -->
+            </ul>
+        </div>
+    </div>
+
+    <div id="exit-game-confirmation-modal" class="modal" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="exit-game-modal-title">
+        <div class="modal-content">
+            <h2 id="exit-game-modal-title">게임 나가기 확인</h2>
+            <p>정말로 게임에서 나가시겠습니까? 현재 핸드에 베팅한 칩은 반환되지 않습니다.</p>
+            <div class="modal-actions">
+                <button id="confirm-exit-game-button" class="modal-button alert">나가기</button>
+                <button id="cancel-exit-game-button" class="modal-button">머무르기</button>
+            </div>
+        </div>
+    </div>
+
+    <script type="module" src="index.js"></script>
+<script type="module" src="/index.tsx"></script>
+</body>
+</html>
