@@ -1060,7 +1060,7 @@ function updateActionButtonsAvailability() {
         confirmBetButton.disabled = true; 
         confirmBetButton.textContent = "벳/레이즈"; 
         betPercentageSlider.disabled = true;
-        // allInButton.disabled = true; // Already handled by the combined condition above
+        // allInButton.disabled = true; // AI is all-in, so human's all-in button is disabled by the combined condition at the top of this function.
 
     } else { // AI is NOT all-in (or no AI player), normal betting rules apply
         const canCheck = humanPlayer.currentBetInRound >= currentBetToCall && !humanPlayer.isAllIn;
@@ -1175,6 +1175,7 @@ async function handleAllInAction() {
     if (!humanPlayer || currentPlayerTurn !== 'human' || !isHandInProgress || humanPlayer.isAllIn) return;
     if (aiPlayer && aiPlayer.isAllIn) { // Player should use Call button if AI is already all-in
         messageAreaDiv.textContent = "AI가 이미 올인 상태입니다. '콜' 버튼을 사용하세요.";
+        updateActionButtonsAvailability(); // Ensure correct buttons like "Call" are enabled/updated.
         return;
     }
 
@@ -2261,11 +2262,11 @@ async function handleStartConfiguredGame(): Promise<void> {
     humanPlayer = { name: "나", holeCards: [], chips: sessionStartingChips, isFolded: false, currentBetInRound: 0, isAllIn: false, lastAction: 'none', seat: 'human', hasActedThisRound: false };
     
     if (mode === 'solo_ai') {
-        let aiSessionChips = sessionStartingChips;
+        let aiSessionChips = sessionStartingChips; // Default to same as player
         if (selectedAIDifficulty === 'impossible') {
-            aiSessionChips = Math.floor(sessionStartingChips / 10);
-            aiSessionChips = Math.max(aiSessionChips, dynamicBigBlind * 5, 50); 
+            aiSessionChips = sessionStartingChips; // Impossible AI starts with the same chips as the player
         }
+        // For 'marathon', AI starts with sessionStartingChips as well, handled by default aiSessionChips initialization.
         aiPlayer = { name: "AI 상대", holeCards: [], chips: aiSessionChips, isFolded: false, currentBetInRound: 0, isAllIn: false, lastAction: 'none', seat: 'ai', hasActedThisRound: false };
     } else {
         aiPlayer = null; 
