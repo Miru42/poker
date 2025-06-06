@@ -1,3 +1,4 @@
+
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -863,7 +864,11 @@ function updateBetSliderUI() {
     betPercentageValue.textContent = `${percentage}%`;
 
     if (humanPlayer.chips > 0) {
-        const calculatedValue = Math.min(humanPlayer.chips, Math.max(1, Math.floor(humanPlayer.chips * (percentage / 100))));
+        let calculatedValue = Math.min(humanPlayer.chips, Math.max(1, Math.floor(humanPlayer.chips * (percentage / 100))));
+        // Cap bet if AI has fewer chips and is not all-in
+        if (aiPlayer && !aiPlayer.isAllIn && calculatedValue > aiPlayer.chips) {
+            calculatedValue = aiPlayer.chips;
+        }
         calculatedBetAmountDisplay.textContent = `(금액: ${calculatedValue})`;
     } else {
         calculatedBetAmountDisplay.textContent = `(금액: 0)`;
@@ -1033,7 +1038,7 @@ function updateActionButtonsAvailability() {
     }
 
     foldButton.disabled = humanPlayer.isAllIn; 
-    allInButton.disabled = humanPlayer.isAllIn;
+    allInButton.disabled = humanPlayer.isAllIn || (aiPlayer?.isAllIn ?? false); // Disable All-in if human is already all-in OR AI is already all-in
     
     if (aiPlayer && aiPlayer.isAllIn) {
         // AI is all-in. Human can only fold or call AI's all-in amount.
@@ -1043,10 +1048,7 @@ function updateActionButtonsAvailability() {
 
         if (callAmountForAIAllIn <= 0) { // Human has already matched or exceeded AI's all-in.
             callButton.disabled = true;
-            callButton.textContent = '콜'; // Or "매치됨"
-            // Check button might be enabled if human has matched and it's their turn to act further (complex, usually round ends)
-            // For simplicity, if AI is all-in and human matched, betting round should end or check is option.
-            // If AI is all in and human's currentBetInRound >= AI's currentBetInRound, human can check if no further action possible.
+            callButton.textContent = '콜'; 
              checkButton.disabled = humanPlayer.isAllIn;
 
         } else {
@@ -1058,6 +1060,7 @@ function updateActionButtonsAvailability() {
         confirmBetButton.disabled = true; 
         confirmBetButton.textContent = "벳/레이즈"; 
         betPercentageSlider.disabled = true;
+        // allInButton.disabled = true; // Already handled by the combined condition above
 
     } else { // AI is NOT all-in (or no AI player), normal betting rules apply
         const canCheck = humanPlayer.currentBetInRound >= currentBetToCall && !humanPlayer.isAllIn;
@@ -1079,27 +1082,28 @@ function updateActionButtonsAvailability() {
              confirmBetButton.textContent = "올인됨";
         } else {
             const percentage = parseInt(betPercentageSlider.value);
-            // Ensure calculatedValue is derived from a positive chip amount for slider UI
-            const currentActionValue = humanPlayer.chips > 0 ? Math.min(humanPlayer.chips, Math.max(1, Math.floor(humanPlayer.chips * (percentage / 100)))) : 0;
+            let currentActionValue = humanPlayer.chips > 0 ? Math.min(humanPlayer.chips, Math.max(1, Math.floor(humanPlayer.chips * (percentage / 100)))) : 0;
             
+            // Cap actionValue by AI's remaining chips if AI is not all-in
+            if (aiPlayer && !aiPlayer.isAllIn && currentActionValue > aiPlayer.chips) {
+                currentActionValue = aiPlayer.chips;
+            }
+
             const isRaiseAttempt = currentBetToCall > 0; 
             const newTotalBetIfActionTaken = humanPlayer.currentBetInRound + currentActionValue;
 
             let isValidAction = false;
             if (isRaiseAttempt) { 
                 confirmBetButton.textContent = '레이즈';
-                // Valid if it's an all-in, or the raise amount meets minRaiseAmount
                 if (currentActionValue === humanPlayer.chips || (newTotalBetIfActionTaken - currentBetToCall >= minRaiseAmount) ) {
                     isValidAction = true;
                 }
             } else { // Bet attempt
                 confirmBetButton.textContent = '벳';
-                 // Valid if it's an all-in, or the bet amount meets big blind
                 if (currentActionValue === humanPlayer.chips || newTotalBetIfActionTaken >= dynamicBigBlind) {
                     isValidAction = true;
                 }
             }
-            // Disable if not a valid action, or trying to bet 0, or betting more than chips
             confirmBetButton.disabled = !isValidAction || currentActionValue === 0 || currentActionValue > humanPlayer.chips; 
         }
     }
@@ -1135,17 +1139,15 @@ async function handleCallAction() {
     if (!humanPlayer || currentPlayerTurn !== 'human' || !isHandInProgress || humanPlayer.isAllIn) return;
     
     let callAmountNeeded = currentBetToCall - humanPlayer.currentBetInRound;
-    if (aiPlayer && aiPlayer.isAllIn) { // If AI is all-in, call amount is capped by AI's bet
+    if (aiPlayer && aiPlayer.isAllIn) { 
         callAmountNeeded = Math.max(0, aiPlayer.currentBetInRound - humanPlayer.currentBetInRound);
     }
 
 
     if (callAmountNeeded <= 0) { 
         messageAreaDiv.textContent = "콜할 금액이 없습니다. 체크하거나 벳/레이즈 하세요.";
-        // This state should ideally be prevented by disabling call button if no call is needed.
-        // Or, treat as check if call amount is 0.
         if (callAmountNeeded === 0 && humanPlayer.currentBetInRound >= currentBetToCall) {
-            await handleCheckAction(); // Treat as check
+            await handleCheckAction(); 
         }
         return;
     }
@@ -1171,57 +1173,49 @@ async function handleCallAction() {
 
 async function handleAllInAction() {
     if (!humanPlayer || currentPlayerTurn !== 'human' || !isHandInProgress || humanPlayer.isAllIn) return;
+    if (aiPlayer && aiPlayer.isAllIn) { // Player should use Call button if AI is already all-in
+        messageAreaDiv.textContent = "AI가 이미 올인 상태입니다. '콜' 버튼을 사용하세요.";
+        return;
+    }
 
     const humanTotalChipsBeforeAction = humanPlayer.chips;
     if (humanTotalChipsBeforeAction <= 0) return;
 
-    let amountCommittedByHumanToPotThisAction: number;
-    let finalHumanBetInRound: number; 
+    let amountCommittedByHumanToPotThisAction: number = humanTotalChipsBeforeAction;
+    let finalHumanBetInRound: number = humanPlayer.currentBetInRound + humanTotalChipsBeforeAction; 
 
-    finalHumanBetInRound = humanPlayer.currentBetInRound + humanTotalChipsBeforeAction;
-    amountCommittedByHumanToPotThisAction = humanTotalChipsBeforeAction;
+    // The "all-in" action means player commits all their chips.
+    // The effective bet against AI (if AI has fewer chips) is handled by refund logic in awardPotToWinner
+    // and AI's own logic to not call more than it has.
+    // For this action, player simply puts all their chips forward.
 
-
-    if (aiPlayer && aiPlayer.isAllIn && finalHumanBetInRound > aiPlayer.currentBetInRound) {
-        const requiredToCallAIAllIn = aiPlayer.currentBetInRound - humanPlayer.currentBetInRound;
-        
-        if (requiredToCallAIAllIn <= 0) { 
-            amountCommittedByHumanToPotThisAction = 0;
-        } else {
-            amountCommittedByHumanToPotThisAction = Math.min(humanTotalChipsBeforeAction, requiredToCallAIAllIn);
-        }
-        finalHumanBetInRound = humanPlayer.currentBetInRound + amountCommittedByHumanToPotThisAction;
-        humanPlayer.lastAction = 'call'; 
-        showActionAnimation('human', `올인 (AI 콜: ${amountCommittedByHumanToPotThisAction})`);
-        messageAreaDiv.textContent = `당신은 AI의 올인(${aiPlayer.currentBetInRound})에 콜하고, 당신도 올인합니다.`;
-    } else {
-        const isCurrentlyBet = currentBetToCall === 0;
-        const isEffectivelyRaise = !isCurrentlyBet && finalHumanBetInRound > currentBetToCall;
-        
-        if (isEffectivelyRaise) {
-            humanPlayer.lastAction = 'raise';
-            minRaiseAmount = finalHumanBetInRound - currentBetToCall; 
-            currentBetToCall = finalHumanBetInRound;
-            playerWhoLastRaised = 'human';
-            if (aiPlayer) aiPlayer.hasActedThisRound = false; 
-        } else if (isCurrentlyBet) {
-            humanPlayer.lastAction = 'bet';
-            minRaiseAmount = finalHumanBetInRound; 
-            currentBetToCall = finalHumanBetInRound;
-            playerWhoLastRaised = 'human';
-            if (aiPlayer) aiPlayer.hasActedThisRound = false; 
-        } else { 
-            humanPlayer.lastAction = 'call';
-        }
-        showActionAnimation('human', `올인 (${amountCommittedByHumanToPotThisAction})`);
-        messageAreaDiv.textContent = `당신은 올인(${amountCommittedByHumanToPotThisAction}) ${translateAction(humanPlayer.lastAction)}하여 총 ${finalHumanBetInRound}(으)로 만들었습니다!`;
+    const isCurrentlyBet = currentBetToCall === 0;
+    const isEffectivelyRaise = !isCurrentlyBet && finalHumanBetInRound > currentBetToCall;
+    
+    if (isEffectivelyRaise) {
+        humanPlayer.lastAction = 'raise';
+        minRaiseAmount = finalHumanBetInRound - currentBetToCall; 
+        currentBetToCall = finalHumanBetInRound;
+        playerWhoLastRaised = 'human';
+        if (aiPlayer) aiPlayer.hasActedThisRound = false; 
+    } else if (isCurrentlyBet) {
+        humanPlayer.lastAction = 'bet';
+        minRaiseAmount = finalHumanBetInRound; 
+        currentBetToCall = finalHumanBetInRound;
+        playerWhoLastRaised = 'human';
+        if (aiPlayer) aiPlayer.hasActedThisRound = false; 
+    } else { 
+        humanPlayer.lastAction = 'call'; // All-in to call an existing bet
     }
+    showActionAnimation('human', `올인 (${amountCommittedByHumanToPotThisAction})`);
+    messageAreaDiv.textContent = `당신은 올인(${amountCommittedByHumanToPotThisAction}) ${translateAction(humanPlayer.lastAction)}하여 총 ${finalHumanBetInRound}(으)로 만들었습니다!`;
+    
 
-    humanPlayer.chips -= amountCommittedByHumanToPotThisAction; // Player's chips reduced by the amount actually committed
+    humanPlayer.chips -= amountCommittedByHumanToPotThisAction; 
     currentPot += amountCommittedByHumanToPotThisAction;
     humanPlayer.currentBetInRound = finalHumanBetInRound; 
 
-    if (humanPlayer.chips === 0) { // Player is all-in only if their chips are now zero
+    if (humanPlayer.chips === 0) { 
         humanPlayer.isAllIn = true;
     }
     
@@ -1232,12 +1226,13 @@ async function handleAllInAction() {
 
 async function handleBetRaiseAction() {
     if (!humanPlayer || currentPlayerTurn !== 'human' || !isHandInProgress || humanPlayer.isAllIn) return;
-    if (aiPlayer && aiPlayer.isAllIn) { // Cannot bet/raise an all-in player
+    if (aiPlayer && aiPlayer.isAllIn) { 
         messageAreaDiv.textContent = "AI가 이미 올인 상태입니다. 콜 또는 폴드만 가능합니다.";
         return;
     }
     
     let actionAmount = 0; 
+    let actionAnimMsgPart = "";
     if (humanPlayer.chips > 0) {
         const percentage = parseInt(betPercentageSlider.value);
         actionAmount = Math.min(humanPlayer.chips, Math.max(1, Math.floor(humanPlayer.chips * (percentage / 100))));
@@ -1252,18 +1247,27 @@ async function handleBetRaiseAction() {
          return;
     }
 
+    // Cap actionAmount by AI's remaining chips if AI is not all-in
+    if (aiPlayer && !aiPlayer.isAllIn && actionAmount > aiPlayer.chips) {
+        const originalActionAmount = actionAmount;
+        actionAmount = aiPlayer.chips;
+        actionAnimMsgPart = ` (AI의 남은 칩 ${actionAmount}에 맞춰 금액 조정됨)`;
+        // This message part will be appended to the main action message.
+    }
+
+
     const isRaiseAttempt = currentBetToCall > 0;
     const newTotalBetInRoundForPlayer = humanPlayer.currentBetInRound + actionAmount;
 
     if (isRaiseAttempt) { 
         const raiseAmount = newTotalBetInRoundForPlayer - currentBetToCall;
-        if (actionAmount < humanPlayer.chips && raiseAmount < minRaiseAmount) { // Not an all-in and raise too small
+        if (actionAmount < humanPlayer.chips && raiseAmount < minRaiseAmount) { 
             messageAreaDiv.textContent = `최소 레이즈는 ${minRaiseAmount} 만큼 더 올려서 총 ${currentBetToCall + minRaiseAmount}이 되도록 해야 합니다. 또는 올인하세요.`;
             return;
         }
     } else { // Bet attempt
         const currentDynamicBigBlindVal = currentGameMode === 'solo_ai' ? dynamicBigBlind : DEFAULT_BIG_BLIND;
-        if (actionAmount < humanPlayer.chips && newTotalBetInRoundForPlayer < currentDynamicBigBlindVal) { // Not an all-in and bet too small
+        if (actionAmount < humanPlayer.chips && newTotalBetInRoundForPlayer < currentDynamicBigBlindVal) { 
             messageAreaDiv.textContent = `최소 벳 금액은 ${currentDynamicBigBlindVal} 입니다. 또는 올인하세요.`;
             return;
         }
@@ -1279,19 +1283,18 @@ async function handleBetRaiseAction() {
         humanPlayer.isAllIn = true;
     }
     
-    // Update game state based on bet/raise
     if (humanPlayer.lastAction === 'bet') {
         currentBetToCall = newTotalBetInRoundForPlayer;
-        minRaiseAmount = newTotalBetInRoundForPlayer; // Next raise must be at least this bet amount again
+        minRaiseAmount = newTotalBetInRoundForPlayer; 
         playerWhoLastRaised = 'human';
     } else if (humanPlayer.lastAction === 'raise') {
-        minRaiseAmount = newTotalBetInRoundForPlayer - currentBetToCall; // The size of this raise becomes new minRaise
+        minRaiseAmount = newTotalBetInRoundForPlayer - currentBetToCall; 
         currentBetToCall = newTotalBetInRoundForPlayer;
         playerWhoLastRaised = 'human';
     }
-    if (aiPlayer) aiPlayer.hasActedThisRound = false; // AI needs to act again
+    if (aiPlayer) aiPlayer.hasActedThisRound = false; 
     
-    messageAreaDiv.textContent = `당신이 ${actionAmount}을(를) ${translateAction(humanPlayer.lastAction)}하여 총 ${newTotalBetInRoundForPlayer}(으)로 만들었습니다.`;
+    messageAreaDiv.textContent = `당신이 ${actionAmount}을(를) ${translateAction(humanPlayer.lastAction)}하여 총 ${newTotalBetInRoundForPlayer}(으)로 만들었습니다.${actionAnimMsgPart}`;
     showActionAnimation('human', `${translateAction(humanPlayer.lastAction)}: ${actionAmount}`);
     
     await checkBettingRoundEnd();
@@ -1309,24 +1312,23 @@ function getMarathonAIAction(level: number, ai: PlayerProfile, human: PlayerProf
     if (level === 1) { // Very basic AI
         if (canCheck) {
             if (handStrength >= 2 && Math.random() < 0.3) { // Pair or better, sometimes bet
-                const betAmount = Math.min(ai.chips, bigBlindVal);
+                let betAmount = Math.min(ai.chips, bigBlindVal);
+                 if (human && !human.isAllIn && betAmount > human.chips) { betAmount = human.chips; } // Cap by human stack
                 if (betAmount > 0) return { type: 'bet', amount: ai.currentBetInRound + betAmount };
             }
             return { type: 'check' };
         } else { // Must call or fold
-            if (handStrength < 2 && amountToCallForAI > ai.chips * 0.05 && Math.random() < 0.95) return { type: 'fold' }; // High card, small call, usually fold
-            if (handStrength < 3 && amountToCallForAI > ai.chips * 0.15 && Math.random() < 0.8) return { type: 'fold' };// Pair, larger call, often fold
-            if (ai.chips <= amountToCallForAI) return {type: 'allin', amount: ai.currentBetInRound + ai.chips}; // Must go all-in to call
+            if (handStrength < 2 && amountToCallForAI > ai.chips * 0.05 && Math.random() < 0.95) return { type: 'fold' }; 
+            if (handStrength < 3 && amountToCallForAI > ai.chips * 0.15 && Math.random() < 0.8) return { type: 'fold' };
+            if (ai.chips <= amountToCallForAI) return {type: 'allin', amount: ai.currentBetInRound + ai.chips}; 
             return { type: 'call' }; 
         }
     }
 
-    // More advanced AI for levels 2-9
     const foldProbabilityBase = 0.5; 
-    const aggressionFactor = level / 20; // Max 0.45 for level 9
-    const bluffFactor = level / 25; // Max 0.36 for level 9
+    const aggressionFactor = level / 20; 
+    const bluffFactor = level / 25; 
 
-    // Check for draws
     const allCardsForAI = ai.holeCards.concat(community);
     let isFlushDraw = false;
     if (allCardsForAI.length >= 4) {
@@ -1340,9 +1342,7 @@ function getMarathonAIAction(level: number, ai: PlayerProfile, human: PlayerProf
         const uniqueRanksForStraight = [...new Set(allCardsForAI.map(c=>c.value))].sort((a,b)=>a-b);
         if(uniqueRanksForStraight.length >= 4) {
             for(let i=0; i <= uniqueRanksForStraight.length - 4; i++) {
-                // Check for 4 consecutive ranks like 5,6,7,8 (needs one more for straight)
                 if(uniqueRanksForStraight[i+3] - uniqueRanksForStraight[i] === 3) isOpenEndedStraightDraw = true; 
-                // Check for A,2,3,4 for wheel draw
                 if(uniqueRanksForStraight.includes(14) && uniqueRanksForStraight.includes(2) && uniqueRanksForStraight.includes(3) && uniqueRanksForStraight.includes(4) && i===0) isOpenEndedStraightDraw = true;
             }
         }
@@ -1351,34 +1351,40 @@ function getMarathonAIAction(level: number, ai: PlayerProfile, human: PlayerProf
 
 
     if (canCheck) {
-        if (handStrength >= 4 || (hasStrongDraw && Math.random() < 0.6 + bluffFactor)) { // Three of a kind or better, or strong draw with bluff chance
-            const betPercentage = (Math.floor(Math.random() * (level * 2)) + 5) * 5; // Bet 25% to (level*10+25)% of chips
+        if (handStrength >= 4 || (hasStrongDraw && Math.random() < 0.6 + bluffFactor)) { 
+            const betPercentage = (Math.floor(Math.random() * (level * 2)) + 5) * 5; 
             let betAmount = Math.min(ai.chips, Math.max(bigBlindVal, Math.floor(ai.chips * (betPercentage / 100))));
-            betAmount = Math.max(betAmount, bigBlindVal); // Ensure at least big blind
+            betAmount = Math.max(betAmount, bigBlindVal); 
+            if (human && !human.isAllIn && betAmount > human.chips) { betAmount = human.chips; } // Cap by human stack
             if (ai.chips === betAmount) return { type: 'allin', amount: ai.currentBetInRound + betAmount};
             if (betAmount > 0) return { type: 'bet', amount: ai.currentBetInRound + betAmount };
         }
-        if (Math.random() < 0.2 + aggressionFactor) { // Random aggression bet
-             const betAmount = Math.min(ai.chips, bigBlindVal);
+        if (Math.random() < 0.2 + aggressionFactor) { 
+             let betAmount = Math.min(ai.chips, bigBlindVal);
+             if (human && !human.isAllIn && betAmount > human.chips) { betAmount = human.chips; } // Cap by human stack
              if (betAmount > 0) return { type: 'bet', amount: ai.currentBetInRound + betAmount };
         }
         return { type: 'check' }; 
-    } else { // Must call, raise or fold
-        // Fold logic: weak hand, no strong draw, facing significant bet
+    } else { 
         if (handStrength < 2 && !hasStrongDraw && amountToCallForAI > bigBlindVal * 2 && Math.random() < foldProbabilityBase + 0.25 - aggressionFactor) return { type: 'fold' };
         
-        // Raise logic: strong hand or strong draw with bluff
-        if (handStrength >= 5 || (hasStrongDraw && Math.random() < 0.5 + bluffFactor) ) { // Straight or better, or strong draw
-            if (ai.chips > amountToCallForAI + minRaiseVal) { // Can make a meaningful raise
-                // Raise to a varying amount, e.g., call + (minRaise to 2*pot)
-                let raiseTotal = Math.min(ai.chips + ai.currentBetInRound, betToCallVal + Math.max(minRaiseVal, bigBlindVal * (1 + Math.floor(level / 2)), amountToCallForAI * (1 + level/10) ));
-                if (ai.chips <= (raiseTotal - ai.currentBetInRound)) return { type: 'allin', amount: ai.currentBetInRound + ai.chips }; // All-in if raise is for all chips
-                return { type: 'raise', amount: raiseTotal };
+        if (handStrength >= 5 || (hasStrongDraw && Math.random() < 0.5 + bluffFactor) ) { 
+            if (ai.chips > amountToCallForAI + minRaiseVal) { 
+                let raiseAdditional = Math.max(minRaiseVal, bigBlindVal * (1 + Math.floor(level / 2)), amountToCallForAI * (1 + level/10) );
+                if (human && !human.isAllIn && (amountToCallForAI + raiseAdditional) > human.chips) {
+                    raiseAdditional = human.chips - amountToCallForAI; // Cap raise by what human can call
+                    raiseAdditional = Math.max(0, raiseAdditional);
+                }
+                let targetTotalBet = betToCallVal + raiseAdditional;
+                targetTotalBet = Math.min(ai.currentBetInRound + ai.chips, targetTotalBet);
+
+
+                if (ai.chips <= (targetTotalBet - ai.currentBetInRound)) return { type: 'allin', amount: ai.currentBetInRound + ai.chips }; 
+                if (targetTotalBet > betToCallVal) return { type: 'raise', amount: targetTotalBet };
             }
         }
-        // Call or Fold based on odds and hand strength
-        if (!hasStrongDraw && amountToCallForAI > ai.chips * (0.45 - aggressionFactor*0.15) && Math.random() < foldProbabilityBase - aggressionFactor) return {type: 'fold'}; // Fold if call is too expensive for weak hand
-        if (ai.chips <= amountToCallForAI) return { type: 'allin', amount: ai.currentBetInRound + ai.chips}; // Must go all-in to call
+        if (!hasStrongDraw && amountToCallForAI > ai.chips * (0.45 - aggressionFactor*0.15) && Math.random() < foldProbabilityBase - aggressionFactor) return {type: 'fold'}; 
+        if (ai.chips <= amountToCallForAI) return { type: 'allin', amount: ai.currentBetInRound + ai.chips}; 
         return { type: 'call' };
     }
 }
@@ -1390,10 +1396,6 @@ function simulateDealingRemainingCommunityCards(deckSnapshot: Card[], currentCom
 
     for (let i = 0; i < cardsNeededForFullBoard; i++) {
         if (tempDeck.length === 0) break;
-        // In simulation, we don't burn cards after the first street (flop) is out or being simulated.
-        // The initial burn for the flop (if simulating from pre-flop) should be handled by the caller by providing a deckSnapshot that already accounts for that burn.
-        // Burns for turn/river also need to be handled by the caller before calling this.
-        // This function is simplified to just deal 'cardsNeeded' from the provided deck.
         finalBoard.push(tempDeck.shift()!);
     }
     return finalBoard;
@@ -1401,25 +1403,22 @@ function simulateDealingRemainingCommunityCards(deckSnapshot: Card[], currentCom
 
 
 function getImpossibleAIAction(ai: PlayerProfile, human: PlayerProfile, community: Card[], betToCallVal: number, minRaiseVal: number, bigBlindVal: number, potVal: number): AIActionDecision {
-    const deckSnapshot = [...deck]; // Use a snapshot of the current game deck
+    const deckSnapshot = [...deck]; 
     
-    // Simulate the rest of the board
     let tempDeckForSim = [...deckSnapshot];
     let simulatedCommunity = [...community];
 
-    // Account for burns IF we are simulating future streets
-    if (simulatedCommunity.length === 0) { // Pre-flop, need to simulate flop, turn, river
-        if (tempDeckForSim.length > 0) tempDeckForSim.shift(); // Burn for flop
-    } else if (simulatedCommunity.length === 3) { // Flop is out, need to simulate turn, river
-        if (tempDeckForSim.length > 0) tempDeckForSim.shift(); // Burn for turn
-    } else if (simulatedCommunity.length === 4) { // Turn is out, need to simulate river
-        if (tempDeckForSim.length > 0) tempDeckForSim.shift(); // Burn for river
+    if (simulatedCommunity.length === 0) { 
+        if (tempDeckForSim.length > 0) tempDeckForSim.shift(); 
+    } else if (simulatedCommunity.length === 3) { 
+        if (tempDeckForSim.length > 0) tempDeckForSim.shift(); 
+    } else if (simulatedCommunity.length === 4) { 
+        if (tempDeckForSim.length > 0) tempDeckForSim.shift(); 
     }
     
     const finalBoard = simulateDealingRemainingCommunityCards(tempDeckForSim, simulatedCommunity);
 
 
-    // Evaluate hands with the final board
     const aiFinalEval = evaluateTexasHoldemHand(ai.holeCards, finalBoard);
     const humanFinalEval = evaluateTexasHoldemHand(human.holeCards, finalBoard);
     const comparisonResult = compareHands(aiFinalEval, humanFinalEval);
@@ -1429,82 +1428,81 @@ function getImpossibleAIAction(ai: PlayerProfile, human: PlayerProfile, communit
         outcome = 'ai_wins';
     } else if (comparisonResult === humanFinalEval && humanFinalEval.rankValue > aiFinalEval.rankValue) {
         outcome = 'human_wins';
-    } else if (comparisonResult === aiFinalEval) { // AI wins ties based on compareHands returning eval1 in case of exact tie value
+    } else if (comparisonResult === aiFinalEval) { 
          outcome = aiFinalEval.rankValue === humanFinalEval.rankValue ? 'split' : 'ai_wins'; 
-         if (outcome === 'split') { // True split check based on card values if ranks are same
+         if (outcome === 'split') { 
             const hand1Cards = aiFinalEval.bestHandCards!.map(c => c.value).sort((a, b) => b - a);
             const hand2Cards = humanFinalEval.bestHandCards!.map(c => c.value).sort((a, b) => b - a);
             let trueSplit = true;
             for (let i = 0; i < 5; i++) {
                 if (hand1Cards[i] !== hand2Cards[i]) { trueSplit = false; break;}
             }
-            if (!trueSplit) outcome = comparisonResult === aiFinalEval ? 'ai_wins' : 'human_wins'; // If not true split, use original compare
+            if (!trueSplit) outcome = comparisonResult === aiFinalEval ? 'ai_wins' : 'human_wins'; 
          }
 
-    } else { // humanFinalEval was returned by compareHands and was better
+    } else { 
         outcome = 'human_wins';
     }
     
     const canCheck = betToCallVal - ai.currentBetInRound <= 0;
     const amountToCallForAI = betToCallVal - ai.currentBetInRound;
 
-    // "Impossible" AI logic:
-    // If AI is losing, fold if has to call. Check if can check.
     if (outcome === 'human_wins' && !canCheck && amountToCallForAI > 0) {
       return { type: 'fold' };
     }
-    // If AI is losing and calling means all-in, fold (unless it's a tiny amount, but impossible AI is cautious)
     if (outcome === 'human_wins' && amountToCallForAI >= ai.chips && amountToCallForAI > 0) {
         return { type: 'fold' };
     }
 
 
-    // If AI is winning:
     if (outcome === 'ai_wins') {
-        if (human.isAllIn) { // Human is all-in, AI just needs to call to win
-            if (ai.chips <= amountToCallForAI && amountToCallForAI > 0) return {type: 'allin', amount: ai.currentBetInRound + ai.chips}; // Call with all-in if necessary
+        if (human.isAllIn) { 
+            if (ai.chips <= amountToCallForAI && amountToCallForAI > 0) return {type: 'allin', amount: ai.currentBetInRound + ai.chips}; 
             return { type: 'call', amount: ai.currentBetInRound + Math.min(ai.chips, amountToCallForAI) };
         }
-        if (canCheck) { // AI can check
-            // Slow play sometimes on earlier streets
-            if (community.length < 4 && Math.random() < 0.3) { // 30% chance to check on flop/turn if winning
+        if (canCheck) { 
+            if (community.length < 4 && Math.random() < 0.3) { 
                 return { type: 'check' }; 
             }
-            // Otherwise, bet for value
-            let betAmount = Math.min(ai.chips, Math.max(bigBlindVal, Math.floor(potVal * (0.6 + Math.random() * 0.4)))); // Bet 60-100% of pot
-            betAmount = Math.max(betAmount, bigBlindVal); // Ensure at least big blind
+            let betAmount = Math.min(ai.chips, Math.max(bigBlindVal, Math.floor(potVal * (0.6 + Math.random() * 0.4)))); 
+            betAmount = Math.max(betAmount, bigBlindVal); 
+            if (!human.isAllIn && betAmount > human.chips) { betAmount = human.chips; } // Cap by human stack
             if (ai.chips === betAmount) return { type: 'allin', amount: ai.currentBetInRound + betAmount };
             return { type: 'bet', amount: ai.currentBetInRound + betAmount };
-        } else { // AI must call or raise
-            // If call is cheap and not on river, might just call to see next card (even if winning)
-            if (amountToCallForAI <= potVal * 0.5 && community.length < 4 && Math.random() < 0.4) { // 40% chance to just call small bets
+        } else { 
+            if (amountToCallForAI <= potVal * 0.5 && community.length < 4 && Math.random() < 0.4) { 
                  if (ai.chips <= amountToCallForAI) return { type: 'allin', amount: ai.currentBetInRound + ai.chips};
                 return { type: 'call' }; 
             }
-            // Otherwise, raise for value
-            let raisePotPercentage = 0.7 + Math.random() * 0.8; // Raise 0.7 to 1.5 times the (pot + call amount)
+            let raisePotPercentage = 0.7 + Math.random() * 0.8; 
             let raiseAmountOverBet = Math.max(minRaiseVal, Math.floor((potVal + amountToCallForAI) * raisePotPercentage)); 
+            if (!human.isAllIn && (amountToCallForAI + raiseAmountOverBet) > human.chips) {
+                 raiseAmountOverBet = human.chips - amountToCallForAI; // Cap raise by what human can call
+                 raiseAmountOverBet = Math.max(0, raiseAmountOverBet);
+            }
             let targetTotalBet = betToCallVal + raiseAmountOverBet;
+            targetTotalBet = Math.min(ai.currentBetInRound + ai.chips, targetTotalBet);
             
-            if (ai.chips <= (targetTotalBet - ai.currentBetInRound)) return { type: 'allin', amount: ai.currentBetInRound + ai.chips }; // All-in if raise is for all chips
-            return { type: 'raise', amount: targetTotalBet };
+            if (ai.chips <= (targetTotalBet - ai.currentBetInRound)) return { type: 'allin', amount: ai.currentBetInRound + ai.chips }; 
+            if (targetTotalBet > betToCallVal) return { type: 'raise', amount: targetTotalBet };
+            if (ai.chips <= amountToCallForAI) return { type: 'allin', amount: ai.currentBetInRound + ai.chips}; // Fallback to call if raise invalid
+            return { type: 'call'};
         }
-    } else if (outcome === 'human_wins') { // AI is losing based on perfect info
+    } else if (outcome === 'human_wins') { 
         if (canCheck) {
-            return { type: 'check' }; // Check if possible to avoid putting more money
+            return { type: 'check' }; 
         } else {
-            return { type: 'fold' }; // Fold if must call
+            return { type: 'fold' }; 
         }
     } else { // Split pot
         if (canCheck) {
             return { type: 'check' };
         } else {
-            // Call if human is all-in, or call is very small, or AI must go all-in to call
             if (human.isAllIn || amountToCallForAI <= bigBlindVal / 2 || amountToCallForAI >= ai.chips) {
                 if (ai.chips <= amountToCallForAI) return { type: 'allin', amount: ai.currentBetInRound + ai.chips};
                 return { type: 'call' };
             }
-            return { type: 'fold' }; // Otherwise, fold in a split pot scenario if call is significant
+            return { type: 'fold' }; 
         }
     }
 }
@@ -1519,12 +1517,12 @@ async function triggerAIAction() {
     await updateGameUI(); 
 
     if (aiPlayer.isFolded || aiPlayer.isAllIn) { 
-        aiPlayer.hasActedThisRound = true; // Mark as acted if already folded/all-in to prevent loops
+        aiPlayer.hasActedThisRound = true; 
         await checkBettingRoundEnd();
         return;
     }
 
-    await new Promise(resolve => setTimeout(resolve, 1500 + Math.random() * 500)); // AI "thinking" time
+    await new Promise(resolve => setTimeout(resolve, 1500 + Math.random() * 500)); 
      
     let decision: AIActionDecision;
     if (selectedAIDifficulty === 'impossible') {
@@ -1533,11 +1531,12 @@ async function triggerAIAction() {
         decision = getMarathonAIAction(marathonAILevel, aiPlayer, humanPlayer, communityCards, currentBetToCall, minRaiseAmount, dynamicBigBlind, currentPot);
     } else {
         console.error("알 수 없는 AI 난이도:", selectedAIDifficulty);
-        decision = { type: 'check' }; // Default to check on error
+        decision = { type: 'check' }; 
     }
 
     let chipsToCommit = 0;
     let actionAnimMsg = "";
+    let humanStackLimitAppliedMessage = "";
     
     switch (decision.type) {
         case 'fold':
@@ -1546,16 +1545,11 @@ async function triggerAIAction() {
             actionAnimMsg = "AI 폴드";
             messageAreaDiv.textContent = "AI가 폴드했습니다.";
             showActionAnimation('ai', actionAnimMsg);
-            awardPotToWinner(humanPlayer); // Human wins if AI folds
+            awardPotToWinner(humanPlayer); 
             await endHand(); 
-            return; // Hand ends here
+            return; 
         case 'check':
-            // AI can only check if currentBetToCall is 0 or already met by AI
             if (currentBetToCall - aiPlayer.currentBetInRound > 0) { 
-                // This means AI decided to check but there's a bet to call. This is an invalid check.
-                // Fallback: AI should call if it intended to check but couldn't.
-                // Or, a more robust AI would not return 'check' in this state.
-                // For now, treat as a forced call of the minimum.
                 chipsToCommit = Math.min(aiPlayer.chips, currentBetToCall - aiPlayer.currentBetInRound);
                 aiPlayer.lastAction = 'call'; 
                 actionAnimMsg = `AI 콜: ${chipsToCommit}`;
@@ -1568,83 +1562,106 @@ async function triggerAIAction() {
             break;
         case 'call':
             chipsToCommit = Math.min(aiPlayer.chips, currentBetToCall - aiPlayer.currentBetInRound);
-            if (chipsToCommit < 0) chipsToCommit = 0; // Should not happen if logic is right
+            if (chipsToCommit < 0) chipsToCommit = 0; 
             aiPlayer.lastAction = 'call';
             actionAnimMsg = `AI 콜: ${chipsToCommit}`;
             messageAreaDiv.textContent = `AI가 ${chipsToCommit}을 콜했습니다.`;
             break;
-        case 'bet':
-            chipsToCommit = Math.min(aiPlayer.chips, (decision.amount || 0) - aiPlayer.currentBetInRound);
-            if (chipsToCommit < 0) chipsToCommit = 0;
-            // Ensure bet is at least big blind unless it's an all-in
-            if (chipsToCommit < dynamicBigBlind && chipsToCommit < aiPlayer.chips) {
-                 chipsToCommit = Math.min(aiPlayer.chips, dynamicBigBlind); 
+        case 'bet': {
+            let intendedAdditionalBet = (decision.amount || 0) - aiPlayer.currentBetInRound;
+            intendedAdditionalBet = Math.max(0, intendedAdditionalBet); // Must be positive addition
+            chipsToCommit = Math.min(aiPlayer.chips, intendedAdditionalBet); // Cannot bet more than AI has
+
+            if (humanPlayer && !humanPlayer.isAllIn && chipsToCommit > humanPlayer.chips) {
+                chipsToCommit = humanPlayer.chips; // Cap by human's stack
+                humanStackLimitAppliedMessage = ` (당신의 남은 칩 ${humanPlayer.chips}에 맞춰 조정됨)`;
             }
-            if (chipsToCommit <=0 && aiPlayer.chips > 0) { // Invalid bet amount (e.g. trying to bet 0)
-                aiPlayer.lastAction = 'check'; // Fallback to check
+            
+            if (chipsToCommit < dynamicBigBlind && chipsToCommit < aiPlayer.chips && !(aiPlayer.chips === chipsToCommit && humanStackLimitAppliedMessage)) { // Not an all-in (by AI or by capping against human) and bet too small
+                 chipsToCommit = Math.min(aiPlayer.chips, dynamicBigBlind); 
+                 if (humanPlayer && !humanPlayer.isAllIn && chipsToCommit > humanPlayer.chips) { // Re-cap if forced to big blind
+                    chipsToCommit = humanPlayer.chips;
+                    humanStackLimitAppliedMessage = ` (당신의 남은 칩 ${humanPlayer.chips}에 맞춰 조정됨)`;
+                 }
+            }
+
+            if (chipsToCommit <=0 && aiPlayer.chips > 0) { 
+                chipsToCommit = 0; // ensure it's 0 for the state update
+                aiPlayer.lastAction = 'check'; 
                 actionAnimMsg = "AI 체크";
                 messageAreaDiv.textContent = "AI가 체크했습니다 (잘못된 벳 시도).";
-                break;
+                break; 
             }
             aiPlayer.lastAction = 'bet';
             currentBetToCall = aiPlayer.currentBetInRound + chipsToCommit;
-            minRaiseAmount = chipsToCommit; // The bet amount itself becomes the min raise size for next player
+            minRaiseAmount = chipsToCommit; 
             playerWhoLastRaised = 'ai';
-            if(humanPlayer) humanPlayer.hasActedThisRound = false; // Human needs to act again
-            actionAnimMsg = `AI 벳: ${chipsToCommit}`;
-            messageAreaDiv.textContent = `AI가 ${chipsToCommit}을 벳하여 총 ${currentBetToCall}(으)로 만들었습니다.`;
+            if(humanPlayer) humanPlayer.hasActedThisRound = false; 
+            messageAreaDiv.textContent = `AI가 ${chipsToCommit}을 벳하여 총 ${currentBetToCall}(으)로 만들었습니다.${humanStackLimitAppliedMessage}`;
+            actionAnimMsg = `AI 벳: ${chipsToCommit}${humanStackLimitAppliedMessage ? ' (플레이어 올인 유도)' : ''}`;
             break;
-        case 'raise':
-            const intendedRaiseTotalBet = decision.amount || 0;
-            // Amount AI adds to its current bet
-            chipsToCommit = Math.min(aiPlayer.chips, intendedRaiseTotalBet - aiPlayer.currentBetInRound);
-            if (chipsToCommit < 0) chipsToCommit = 0;
+        }
+        case 'raise': {
+            const intendedTotalBetForAIRound = decision.amount || 0;
+            let intendedAdditionalRaise = intendedTotalBetForAIRound - aiPlayer.currentBetInRound;
+            intendedAdditionalRaise = Math.max(0, intendedAdditionalRaise);
+            chipsToCommit = Math.min(aiPlayer.chips, intendedAdditionalRaise); // AI cannot raise more than it has
+
+            if (humanPlayer && !humanPlayer.isAllIn && chipsToCommit > humanPlayer.chips) {
+                chipsToCommit = humanPlayer.chips; // Cap by human's stack
+                humanStackLimitAppliedMessage = ` (당신의 남은 칩 ${humanPlayer.chips}에 맞춰 조정됨)`;
+            }
 
             const newAITotalBetForRound = aiPlayer.currentBetInRound + chipsToCommit;
-            const actualRaiseAmount = newAITotalBetForRound - currentBetToCall; // Size of the raise over the current bet to call
+            const actualRaiseAmount = newAITotalBetForRound - currentBetToCall; 
 
-            // Validate raise: must be at least minRaiseAmount unless it's an all-in
-            if (chipsToCommit < aiPlayer.chips && actualRaiseAmount < minRaiseAmount) {
-                // Invalid raise (too small and not all-in). AI should call instead if possible.
+            if (chipsToCommit < aiPlayer.chips && actualRaiseAmount < minRaiseAmount && !(aiPlayer.chips === chipsToCommit && humanStackLimitAppliedMessage)) {
                 const callAmountInstead = Math.min(aiPlayer.chips, currentBetToCall - aiPlayer.currentBetInRound);
                 if (callAmountInstead > 0) {
                     chipsToCommit = callAmountInstead;
                     aiPlayer.lastAction = 'call';
                     actionAnimMsg = `AI 콜: ${chipsToCommit}`;
                     messageAreaDiv.textContent = `AI가 (잘못된 레이즈 시도 후) ${chipsToCommit}을 콜했습니다.`;
-                } else { // Cannot even call (already matched or no bet to call)
+                } else { 
                     chipsToCommit = 0;
                     aiPlayer.lastAction = 'check';
-                     actionAnimMsg = "AI 체크";
+                    actionAnimMsg = "AI 체크";
                     messageAreaDiv.textContent = "AI가 체크했습니다 (잘못된 레이즈 시도 후).";
                 }
-            } else { // Valid raise or all-in raise
+            } else { 
                 aiPlayer.lastAction = 'raise';
-                minRaiseAmount = actualRaiseAmount; // This raise amount is the new minimum raise for others
+                minRaiseAmount = actualRaiseAmount; 
                 currentBetToCall = newAITotalBetForRound;
                 playerWhoLastRaised = 'ai';
-                if(humanPlayer) humanPlayer.hasActedThisRound = false; // Human needs to act again
-                actionAnimMsg = `AI 레이즈: ${chipsToCommit}`;
-                messageAreaDiv.textContent = `AI가 ${chipsToCommit}을 레이즈하여 총 ${currentBetToCall}(으)로 만들었습니다.`;
+                if(humanPlayer) humanPlayer.hasActedThisRound = false; 
+                messageAreaDiv.textContent = `AI가 ${chipsToCommit}을 레이즈하여 총 ${currentBetToCall}(으)로 만들었습니다.${humanStackLimitAppliedMessage}`;
+                actionAnimMsg = `AI 레이즈: ${chipsToCommit}${humanStackLimitAppliedMessage ? ' (플레이어 올인 유도)' : ''}`;
             }
             break;
+        }
         case 'allin':
             chipsToCommit = aiPlayer.chips;
             const totalAllInBetByAI = aiPlayer.currentBetInRound + chipsToCommit;
-            if (totalAllInBetByAI > currentBetToCall) { // All-in is a bet or raise
+
+            // Check if AI's all-in is capped by human's ability to call.
+            // The currentBetToCall for human will be AI's total bet.
+            // If human has less, human can only call with their stack.
+            // This specific capping of AI's bet amount isn't explicitly needed here for 'allin' type,
+            // as AI commits its whole stack. The human response will be capped.
+
+            if (totalAllInBetByAI > currentBetToCall) { 
                 aiPlayer.lastAction = currentBetToCall === 0 ? 'bet' : 'raise';
                 if (aiPlayer.lastAction === 'raise') {
                     minRaiseAmount = totalAllInBetByAI - currentBetToCall;
-                } else { // bet
+                } else { 
                     minRaiseAmount = totalAllInBetByAI;
                 }
                 currentBetToCall = totalAllInBetByAI;
                 playerWhoLastRaised = 'ai';
                 if(humanPlayer) humanPlayer.hasActedThisRound = false; 
                 messageAreaDiv.textContent = `AI가 올인 ${translateAction(aiPlayer.lastAction)} (${chipsToCommit}) 하여 총 ${currentBetToCall}(으)로 만들었습니다!`;
-            } else { // All-in is a call or check
+            } else { 
                  if (currentBetToCall - aiPlayer.currentBetInRound <= 0 && totalAllInBetByAI <= currentBetToCall) { 
-                    // AI already matched or no bet to call, all-in is effectively a check
                     aiPlayer.lastAction = 'check';
                     messageAreaDiv.textContent = `AI가 올인 체크 (${chipsToCommit}) 했습니다.`;
                 } else { 
@@ -1678,9 +1695,8 @@ async function checkBettingRoundEnd() {
     const p1CanAct = !p1.isFolded && !p1.isAllIn;
     const p2CanAct = !p2.isFolded && !p2.isAllIn;
 
-    // If one player folds, hand ends immediately (handled in fold action)
     if (p1.isFolded || p2.isFolded) { 
-        if(!isHandInProgress) return; // Avoid multiple endHand calls
+        if(!isHandInProgress) return; 
         const winner = p1.isFolded ? p2 : p1;
         awardPotToWinner(winner);
         await endHand();
@@ -1688,37 +1704,29 @@ async function checkBettingRoundEnd() {
     }
     
     let roundOver = false;
-    // Condition 1: Both players are all-in (or one is all-in and the other called/folded)
     if ( (p1.isAllIn || p1.isFolded) && (p2.isAllIn || p2.isFolded) ) { 
         roundOver = true;
     } 
-    // Condition 2: Bets are equal AND both players have had a chance to act on the current bet level
     else if (p1.currentBetInRound === p2.currentBetInRound) {
-        // Both players must have acted (or be all-in/folded) for the round to end if bets are equal.
-        // hasActedThisRound is crucial. 'Blind' is not a voluntary action for this check.
-        const p1VoluntaryAction = p1.hasActedThisRound || p1.isAllIn || p1.lastAction === 'blind'; // Blind counts as action for BB check
+        const p1VoluntaryAction = p1.hasActedThisRound || p1.isAllIn || p1.lastAction === 'blind'; 
         const p2VoluntaryAction = p2.hasActedThisRound || p2.isAllIn || p2.lastAction === 'blind';
 
         if (p1VoluntaryAction && p2VoluntaryAction) {
-             // Preflop specific: Big Blind can check if no raise.
             if (currentBettingRound === 'preflop') {
                 const bbPlayer = dealerPosition === 'human' ? p2 : p1;
                 const otherPlayer = dealerPosition === 'human' ? p1 : p2;
-                // If BB (playerWhoLastRaised initially) checks, and other player called/checked.
                 if (playerWhoLastRaised === bbPlayer.seat && bbPlayer.lastAction === 'check' && bbPlayer.currentBetInRound === dynamicBigBlind && otherPlayer.currentBetInRound === dynamicBigBlind) {
                     roundOver = true;
                 } 
-                // If betting came back to BB and BB hasn't re-raised, and other player also acted.
-                else if (p1.lastAction !== 'blind' && p2.lastAction !== 'blind') { // Both made voluntary actions after blinds
+                else if (p1.lastAction !== 'blind' && p2.lastAction !== 'blind') { 
                      roundOver = true;
                 }
-            } else { // Post-flop: if bets are equal and both acted voluntarily, round ends.
+            } else { 
                  if (p1.lastAction !== 'blind' && p2.lastAction !== 'blind') {
                     roundOver = true;
                  }
             }
         }
-         // If one player is all-in and the other has called that all-in (bets are equal)
         if ( (p1.isAllIn && p2.currentBetInRound >= p1.currentBetInRound && !p2.isFolded) || 
              (p2.isAllIn && p1.currentBetInRound >= p2.currentBetInRound && !p1.isFolded) ) {
             roundOver = true;
@@ -1731,55 +1739,50 @@ async function checkBettingRoundEnd() {
         return;
     }
 
-    // Determine next player if round is not over
-    // If there was a bet/raise, the player who did not make that last bet/raise is next.
     if (playerWhoLastRaised) { 
-        if (currentPlayerTurn === 'human' && playerWhoLastRaised === 'human') { // Human just raised/bet
+        if (currentPlayerTurn === 'human' && playerWhoLastRaised === 'human') { 
              currentPlayerTurn = 'ai';
-        } else if (currentPlayerTurn === 'ai' && playerWhoLastRaised === 'ai') { // AI just raised/bet
+        } else if (currentPlayerTurn === 'ai' && playerWhoLastRaised === 'ai') { 
              currentPlayerTurn = 'human';
-        } else { // Current player called or checked a bet from the other player
+        } else { 
              if (currentPlayerTurn === 'human') currentPlayerTurn = 'ai';
              else currentPlayerTurn = 'human';
         }
-    } else { // No bet/raise yet in this round (e.g. checks around post-flop, or pre-flop before BB option)
+    } else { 
          if (currentPlayerTurn === 'human') currentPlayerTurn = 'ai';
          else currentPlayerTurn = 'human';
     }
 
 
-    // Skip players who cannot act (folded or all-in)
     if (currentPlayerTurn === 'human' && !p1CanAct) {
         currentPlayerTurn = 'ai';
-        if (!p2CanAct) { await advanceBettingRound(); return; } // Both cannot act, advance
+        if (!p2CanAct) { await advanceBettingRound(); return; } 
     } else if (currentPlayerTurn === 'ai' && !p2CanAct) {
         currentPlayerTurn = 'human';
-        if (!p1CanAct) { await advanceBettingRound(); return; } // Both cannot act, advance
+        if (!p1CanAct) { await advanceBettingRound(); return; } 
     }
 
 
-    // Trigger next action
     if (currentPlayerTurn === 'human') {
-        if (humanPlayer.isFolded || humanPlayer.isAllIn) { // Should have been caught by p1CanAct
-            await checkBettingRoundEnd(); // Re-evaluate if human cannot act
+        if (humanPlayer.isFolded || humanPlayer.isAllIn) { 
+            await checkBettingRoundEnd(); 
             return;
         }
         messageAreaDiv.textContent = `당신의 턴입니다. (${currentBettingRound === 'preflop' ? '프리플랍' : currentBettingRound})`;
         await updateGameUI();
-    } else { // AI's turn
-        if (aiPlayer.isFolded || aiPlayer.isAllIn) { // Should have been caught by p2CanAct
-            await checkBettingRoundEnd(); // Re-evaluate if AI cannot act
+    } else { 
+        if (aiPlayer.isFolded || aiPlayer.isAllIn) { 
+            await checkBettingRoundEnd(); 
             return;
         }
         await updateGameUI(); 
-        setTimeout(triggerAIAction, 100); // Short delay for AI "thinking"
+        setTimeout(triggerAIAction, 100); 
     }
 }
 
 async function advanceBettingRound() {
     if (!humanPlayer || !aiPlayer || sequentialRevealInProgress) return;
 
-    // Reset per-round state for players
     humanPlayer.currentBetInRound = 0; 
     aiPlayer.currentBetInRound = 0;
     
@@ -1789,11 +1792,10 @@ async function advanceBettingRound() {
     minRaiseAmount = currentGameMode === 'solo_ai' ? dynamicBigBlind : DEFAULT_BIG_BLIND; 
     playerWhoLastRaised = null; 
 
-    // Check if betting is concluded due to all-ins before reaching showdown street by street
     const bettingConcludedDueToAllIn = 
         (humanPlayer.isAllIn || aiPlayer.isAllIn) && 
         !(humanPlayer.isFolded || aiPlayer.isFolded) &&
-        ( // This condition means at least one player is all-in, the other has matched or is also all-in for less/equal
+        ( 
             (humanPlayer.isAllIn && aiPlayer.currentBetInRound >= humanPlayer.currentBetInRound && !aiPlayer.isFolded) ||
             (aiPlayer.isAllIn && humanPlayer.currentBetInRound >= aiPlayer.currentBetInRound && !humanPlayer.isFolded) ||
             (humanPlayer.isAllIn && aiPlayer.isAllIn)
@@ -1808,55 +1810,50 @@ async function advanceBettingRound() {
         const delayBetweenStreets = 800; 
 
         if (currentBettingRound === 'preflop' || communityCards.length < 3) {
-            if (deck.length > 0 && communityCards.length === 0) dealFromDeck(1); // Burn before flop
-            await dealCommunity(3 - communityCards.length); // Deal up to 3 community cards
-            // currentBettingRound = 'flop'; // No betting round change, just card dealing
+            if (deck.length > 0 && communityCards.length === 0) dealFromDeck(1); 
+            await dealCommunity(3 - communityCards.length); 
             if (sequentialRevealInProgress && isHandInProgress) await new Promise(resolve => setTimeout(resolve, delayBetweenStreets));
         }
         if (sequentialRevealInProgress && isHandInProgress && communityCards.length < 4) { 
-            if (deck.length > 0) dealFromDeck(1); // Burn before turn
-            await dealCommunity(1); // Deal 4th card
-            // currentBettingRound = 'turn';
+            if (deck.length > 0) dealFromDeck(1); 
+            await dealCommunity(1); 
             if (sequentialRevealInProgress && isHandInProgress) await new Promise(resolve => setTimeout(resolve, delayBetweenStreets));
         }
         if (sequentialRevealInProgress && isHandInProgress && communityCards.length < 5) { 
-            if (deck.length > 0) dealFromDeck(1); // Burn before river
-            await dealCommunity(1); // Deal 5th card
-            // currentBettingRound = 'river';
+            if (deck.length > 0) dealFromDeck(1); 
+            await dealCommunity(1); 
              if (sequentialRevealInProgress && isHandInProgress) await new Promise(resolve => setTimeout(resolve, delayBetweenStreets / 2));
         }
         
         sequentialRevealInProgress = false; 
-        currentBettingRound = 'showdown'; // All cards dealt, go to showdown
+        currentBettingRound = 'showdown'; 
         await handleShowdown(); 
         return; 
     }
 
-    // Advance to the next betting round if not concluded by all-in
     switch (currentBettingRound) {
         case 'preflop':
             currentBettingRound = 'flop';
-            if (deck.length > 0) dealFromDeck(1); // Burn card
+            if (deck.length > 0) dealFromDeck(1); 
             await dealCommunity(3); 
             messageAreaDiv.textContent = "플랍 카드 (3장)가 공개되었습니다.";
             break;
         case 'flop':
             currentBettingRound = 'turn';
-            if (deck.length > 0) dealFromDeck(1); // Burn card
+            if (deck.length > 0) dealFromDeck(1); 
             await dealCommunity(1); 
             messageAreaDiv.textContent = "턴 카드 (4번째)가 공개되었습니다.";
             break;
         case 'turn':
             currentBettingRound = 'river';
-            if (deck.length > 0) dealFromDeck(1); // Burn card
+            if (deck.length > 0) dealFromDeck(1); 
             await dealCommunity(1); 
             messageAreaDiv.textContent = "리버 카드 (5번째)가 공개되었습니다.";
             break;
         case 'river':
-            currentBettingRound = 'showdown'; // After river betting, it's showdown
+            currentBettingRound = 'showdown'; 
             break; 
         default: 
-            // If already in showdown or hand_over, or an unexpected state, don't advance further.
             if (currentBettingRound === 'showdown' || currentBettingRound === 'hand_over') {  }
             else return; 
     }
@@ -1865,14 +1862,12 @@ async function advanceBettingRound() {
     if (currentBettingRound === 'showdown') {
         await handleShowdown();
     } else if (isHandInProgress) { 
-        // Determine who starts the betting in the new round (usually SB or player after dealer)
-        if (dealerPosition === 'ai') { // Human is SB (or first to act post-flop if BB is dealer)
+        if (dealerPosition === 'ai') { 
             currentPlayerTurn = humanPlayer.isFolded || humanPlayer.isAllIn ? 'ai' : 'human';
-        } else { // AI is SB
+        } else { 
             currentPlayerTurn = aiPlayer.isFolded || aiPlayer.isAllIn ? 'human' : 'ai';
         }
         
-        // If the determined starting player cannot act, give turn to the other.
         if (currentPlayerTurn === 'human' && (humanPlayer.isFolded || humanPlayer.isAllIn)) {
             currentPlayerTurn = 'ai';
         }
@@ -1880,23 +1875,22 @@ async function advanceBettingRound() {
             currentPlayerTurn = 'human';
         }
         
-        // If both players are all-in (or one folded and other all-in), showdown should have been triggered.
         if ((humanPlayer.isFolded || humanPlayer.isAllIn) && (aiPlayer.isFolded || aiPlayer.isAllIn)) {
-             await handleShowdown(); // This should be caught by bettingConcludedDueToAllIn earlier
+             await handleShowdown(); 
              return;
         }
 
         const roundNameKor = currentBettingRound === 'flop' ? '플랍' : currentBettingRound === 'turn' ? '턴' : '리버';
         if (currentPlayerTurn === 'ai') {
-             if (aiPlayer.isFolded || aiPlayer.isAllIn) { // AI cannot act
-                await checkBettingRoundEnd(); // Effectively pass turn to human or advance if human also can't act
+             if (aiPlayer.isFolded || aiPlayer.isAllIn) { 
+                await checkBettingRoundEnd(); 
              } else {
                 messageAreaDiv.textContent += ` AI의 턴입니다. (${roundNameKor})`;
                 setTimeout(triggerAIAction, 1000);
              }
-        } else { // Human's turn
-             if (humanPlayer.isFolded || humanPlayer.isAllIn) { // Human cannot act
-                await checkBettingRoundEnd(); // Effectively pass turn to AI or advance
+        } else { 
+             if (humanPlayer.isFolded || humanPlayer.isAllIn) { 
+                await checkBettingRoundEnd(); 
              } else {
                 messageAreaDiv.textContent += ` 당신의 턴입니다. (${roundNameKor})`;
              }
@@ -1945,7 +1939,7 @@ async function handleShowdown() {
     const humanEval = humanPlayer && !humanPlayer.isFolded ? evaluateTexasHoldemHand(humanPlayer.holeCards, communityCards) : { name: "Folded", rankValue: -1, detailedName: "폴드" };
     const aiEval = aiPlayer && !aiPlayer.isFolded ? evaluateTexasHoldemHand(aiPlayer.holeCards, communityCards) : { name: "Folded", rankValue: -1, detailedName: "폴드" };
 
-    let winnerToShowdown: PlayerProfile | 'split' | null = null; // Renamed to avoid conflict with function param
+    let winnerToShowdown: PlayerProfile | 'split' | null = null; 
     let resultMessage = "";
 
     if (humanPlayer && humanPlayer.isFolded) {
@@ -1958,20 +1952,19 @@ async function handleShowdown() {
         const comparison = compareHands(humanEval, aiEval);
         if (comparison === humanEval && humanEval.rankValue > aiEval.rankValue) {
             winnerToShowdown = humanPlayer;
-        } else if (comparison === aiEval && aiEval.rankValue > humanEval.rankValue) {
+        } else if (comparison === aiEval && aiEval.rankValue > aiEval.rankValue) {
             winnerToShowdown = aiPlayer;
-        } else { // Potentially a split
+        } else { 
              const hand1Cards = humanEval.bestHandCards?.map(c => c.value).sort((a,b)=>b-a) || [];
              const hand2Cards = aiEval.bestHandCards?.map(c => c.value).sort((a,b)=>b-a) || [];
-             let trueSplit = humanEval.rankValue === aiEval.rankValue; // Start by assuming split if ranks are same
-             if (trueSplit) { // Compare kickers if ranks are identical
+             let trueSplit = humanEval.rankValue === aiEval.rankValue; 
+             if (trueSplit) { 
                 for (let i = 0; i < Math.min(hand1Cards.length, hand2Cards.length); i++) {
                     if (hand1Cards[i] > hand2Cards[i]) { winnerToShowdown = humanPlayer; trueSplit = false; break; }
                     if (hand2Cards[i] > hand1Cards[i]) { winnerToShowdown = aiPlayer; trueSplit = false; break; }
                 }
              }
              if (trueSplit) winnerToShowdown = 'split';
-             // If not a true split, but compareHands returned one due to value tie, assign winner based on who was eval1
              else if (!winnerToShowdown) winnerToShowdown = comparison === humanEval ? humanPlayer : aiPlayer; 
         }
 
@@ -1989,7 +1982,6 @@ async function handleShowdown() {
 }
 
 function awardPotToWinner(winner: PlayerProfile | 'split' | null) {
-    // --- Pot Adjustment for unequal all-ins before awarding ---
     let finalContestedPot = currentPot;
     let refundMessagePart = "";
 
@@ -1998,10 +1990,7 @@ function awardPotToWinner(winner: PlayerProfile | 'split' | null) {
         if (humanPlayer.currentBetInRound > aiPlayer.currentBetInRound && aiPlayer.isAllIn) {
             const overBet = humanPlayer.currentBetInRound - aiPlayer.currentBetInRound;
             if (overBet > 0) {
-                // Ensure the currentPot has enough to cover the overBet refund.
-                // This check might be complex if pot was already manipulated.
-                // Assuming currentPot includes all bets.
-                const actualRefund = Math.min(overBet, finalContestedPot); // Cannot refund more than what's in pot from this overbet
+                const actualRefund = Math.min(overBet, finalContestedPot); 
                 humanPlayer.chips += actualRefund;
                 finalContestedPot -= actualRefund;
                 refundOccurred = true;
@@ -2017,10 +2006,9 @@ function awardPotToWinner(winner: PlayerProfile | 'split' | null) {
                  if (actualRefund > 0) refundMessagePart = ` (AI의 초과 베팅 ${actualRefund} 반환됨.)`;
             }
         }
-        if (refundOccurred && finalContestedPot < 0) finalContestedPot = 0; // Safety net
+        if (refundOccurred && finalContestedPot < 0) finalContestedPot = 0; 
         if (refundOccurred) console.log(`Pot adjusted. Original: ${currentPot}, Contested: ${finalContestedPot}, Refund: ${refundMessagePart}`);
     }
-    // --- End Pot Adjustment ---
 
     if (winner === 'split' && humanPlayer && aiPlayer) {
         const splitAmount = Math.floor(finalContestedPot / 2);
@@ -2028,12 +2016,9 @@ function awardPotToWinner(winner: PlayerProfile | 'split' | null) {
         humanPlayer.chips += splitAmount;
         aiPlayer.chips += splitAmount;
         if (remainder > 0) { 
-            // Give remainder to player out of position (closer to dealer's left)
-            // For 1v1, SB gets it if dealer is BB, or BB gets it if dealer is SB.
-            // Simpler: dealerPosition determines who is "earlier" in post-flop sense.
-            if (dealerPosition === 'human' && aiPlayer) aiPlayer.chips += remainder; // AI is SB equivalent
-            else if (dealerPosition === 'ai' && humanPlayer) humanPlayer.chips += remainder; // Human is SB equivalent
-            else if (humanPlayer) humanPlayer.chips += remainder; // Fallback
+            if (dealerPosition === 'human' && aiPlayer) aiPlayer.chips += remainder; 
+            else if (dealerPosition === 'ai' && humanPlayer) humanPlayer.chips += remainder; 
+            else if (humanPlayer) humanPlayer.chips += remainder; 
         }
         messageAreaDiv.textContent += `${refundMessagePart} 각각 ${splitAmount} 칩 획득.`;
 
@@ -2043,17 +2028,15 @@ function awardPotToWinner(winner: PlayerProfile | 'split' | null) {
     }
     currentPot = 0; 
 
-    if(humanPlayer) humanPlayer.currentBetInRound = 0; // Reset for next hand display consistency
+    if(humanPlayer) humanPlayer.currentBetInRound = 0; 
     if(aiPlayer) aiPlayer.currentBetInRound = 0;
 
 
-    // Marathon mode advancement or game over conditions
     if (currentGameMode === 'solo_ai' && selectedAIDifficulty === 'marathon' && aiPlayer && aiPlayer.chips === 0 && humanPlayer && humanPlayer.chips > 0) {
         if (marathonAILevel >= 10) { 
              messageAreaDiv.textContent += ` 축하합니다! 마라톤 모드 (레벨 10) 클리어!`;
              if (humanPlayer) { 
                 savePlayerGlobalChips(playerGlobalChips + humanPlayer.chips);
-                humanPlayer.chips = 0; 
             }
         } else {
             marathonAILevel++;
@@ -2064,7 +2047,6 @@ function awardPotToWinner(winner: PlayerProfile | 'split' | null) {
         messageAreaDiv.textContent += ` AI가 모든 칩을 잃었습니다! 당신의 압도적인 승리!`;
         if (humanPlayer) { 
             savePlayerGlobalChips(playerGlobalChips + humanPlayer.chips);
-            humanPlayer.chips = 0; 
         }
     }
 
@@ -2082,18 +2064,13 @@ async function endHand() {
     if(aiPlayer) aiPlayer.lastAction = 'none';
 
     await updateGameUI(); 
-    // Check for game over conditions (player or AI bankrupt)
     if (humanPlayer && aiPlayer && (humanPlayer.chips === 0 || (aiPlayer.chips === 0 && selectedAIDifficulty !== 'marathon'))) {
-        // If human won against non-marathon AI or AI won against human
         if (humanPlayer.chips > 0 && aiPlayer.chips === 0 && selectedAIDifficulty !== 'marathon') { 
-            savePlayerGlobalChips(playerGlobalChips + humanPlayer.chips); // Human collects winnings
-            humanPlayer.chips = 0; // Reset session chips for human
+            savePlayerGlobalChips(playerGlobalChips + humanPlayer.chips); 
+            humanPlayer.chips = 0; 
         } else if (humanPlayer.chips === 0) { 
-            // Human lost, global chips already updated at game start, or by losing bets.
-            // No positive addition here, just make sure session chips are 0.
-             savePlayerGlobalChips(playerGlobalChips); // Save current global (which might be unchanged if lost all)
+             savePlayerGlobalChips(playerGlobalChips); 
         }
-         // Special case for marathon AI losing level 10 already handled in awardPotToWinner
         if (!(selectedAIDifficulty === 'marathon' && aiPlayer.chips === 0 && marathonAILevel > 10)) {
             setupGameButton.disabled = false;
             setupGameButton.style.display = 'inline-block';
@@ -2101,9 +2078,8 @@ async function endHand() {
             startNextHandButton.style.display = 'none';
         }
     } else if (selectedAIDifficulty === 'marathon' && aiPlayer && aiPlayer.chips > 0 && humanPlayer && humanPlayer.chips === 0) {
-        // Human lost in marathon mode
         messageAreaDiv.textContent = "당신의 칩이 모두 소진되었습니다. 마라톤 실패!";
-        savePlayerGlobalChips(playerGlobalChips); // Save whatever global chips remain
+        savePlayerGlobalChips(playerGlobalChips); 
         setupGameButton.disabled = false;
         setupGameButton.style.display = 'inline-block';
         exitGameButton.style.display = 'none';
@@ -2140,7 +2116,7 @@ async function handleDealNewHandPractice(): Promise<void> {
 
 async function handleDealFlop(): Promise<void> { 
     if (currentGameMode !== 'practice' || communityCards.length !== 0) return; 
-    if (deck.length > 0) dealFromDeck(1); // Burn card
+    if (deck.length > 0) dealFromDeck(1); 
     await dealCommunity(3); 
     messageAreaDiv.textContent = "플랍 카드 (3장)가 공개되었습니다.";
     await updateGameUI();
@@ -2148,7 +2124,7 @@ async function handleDealFlop(): Promise<void> {
 
 async function handleDealTurn(): Promise<void> { 
     if (currentGameMode !== 'practice' || communityCards.length !== 3) return; 
-    if (deck.length > 0) dealFromDeck(1); // Burn card
+    if (deck.length > 0) dealFromDeck(1); 
     await dealCommunity(1); 
     messageAreaDiv.textContent = "턴 카드 (4번째)가 공개되었습니다.";
     await updateGameUI();
@@ -2156,7 +2132,7 @@ async function handleDealTurn(): Promise<void> {
 
 async function handleDealRiver(): Promise<void> { 
     if (currentGameMode !== 'practice' || communityCards.length !== 4) return;
-    if (deck.length > 0) dealFromDeck(1); // Burn card
+    if (deck.length > 0) dealFromDeck(1); 
     await dealCommunity(1); 
     messageAreaDiv.textContent = "리버 카드 (5번째)가 공개되었습니다.";
     await updateGameUI();
@@ -2343,7 +2319,6 @@ function hideExitGameConfirmationModal(): void {
 }
 async function handleConfirmExitGame(): Promise<void> {
     if (humanPlayer && currentGameMode === 'solo_ai') {
-        // Add back any chips from the current session if game is exited mid-session
         savePlayerGlobalChips(playerGlobalChips + humanPlayer.chips);
     }
     resetGameUI(true); 
